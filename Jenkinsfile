@@ -1,0 +1,59 @@
+pipeline {
+    agent any
+    environment {
+        DOCKER_IMAGE = 'jenkinsv2'
+    }
+    stages {
+        stage('Build') {
+            steps {
+                script {
+                    docker.build(DOCKER_IMAGE)
+                }
+            }
+        }
+        stage('Test') {
+            steps {
+                script {
+                    docker.image(DOCKER_IMAGE).inside {
+                        sh 'mkdir -p .npm-cache'
+                        sh 'npm install --cache .npm-cache'
+                        sh 'node index.js &'
+                        sh 'sleep 5'  // Esperar a que el servidor arranque
+                        sh 'npm test --cache .npm-cache'
+                    }
+                }
+            }
+        }
+        stage('Stop Old Containers') {
+            steps {
+                script {
+                    // Detener y eliminar cualquier contenedor que esté utilizando el puerto 3000
+                    sh '''
+                    docker ps --filter "ancestor=${DOCKER_IMAGE}" --format "{{.ID}}" | xargs -r docker stop
+                    docker ps --all --filter "ancestor=${DOCKER_IMAGE}" --format "{{.ID}}" | xargs -r docker rm
+                    '''
+                }
+            }
+        }
+        stage('Deploy') {
+            steps {
+                script {
+                    // Buscar y detener cualquier contenedor que esté utilizando el puerto 3000
+                    sh '''
+                    docker ps --filter "publish=3000" --format "{{.ID}}" | xargs -r docker stop
+                    docker ps --all --filter "publish=3000" --format "{{.ID}}" | xargs -r docker rm
+                    docker run -d -p 3000:3000 ${DOCKER_IMAGE}
+                    '''
+                }
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                // Limpiar contenedores que no estén en uso para evitar acumulación
+                sh 'docker system prune -f'
+            }
+        }
+    }
+}
